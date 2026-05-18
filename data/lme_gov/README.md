@@ -8,7 +8,8 @@ https://huggingface.co/datasets/siufgdaias/lme-gov
 ```
 
 After downloading or cloning the dataset repository, restore the files under
-this relative path if you want to run the local validation and scoring scripts:
+this relative path if you want to run the local scoring script and direct
+Python loading:
 
 ```text
 data/lme_gov/lme_gov.json

@@ -19,7 +19,8 @@ NLI components are optional and are described later in this README.
 ### Linux/macOS
 
 ```bash
-git clone <anonymous-github-url>
+# Download and unpack the anonymized repository from:
+# https://anonymous.4open.science/r/ssgm-7325/
 cd ssgm
 python -m venv .venv
 source .venv/bin/activate
@@ -29,7 +30,8 @@ pip install -r requirements.txt
 ### Windows PowerShell
 
 ```powershell
-git clone <anonymous-github-url>
+# Download and unpack the anonymized repository from:
+# https://anonymous.4open.science/r/ssgm-7325/
 cd ssgm
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
