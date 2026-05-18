@@ -1,6 +1,6 @@
 # SSGM Core Engine
 
-This directory contains the implementation of the Stability- and Safety-Governed Memory (SSGM) layer.
+This directory contains the implementation of the Stability and Safety Governed Memory (SSGM) layer.
 
 ## Role in this repository
 

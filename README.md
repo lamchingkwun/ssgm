@@ -1,4 +1,4 @@
-# SSGM: Stability and Safety-Governed Memory
+# SSGM: Stability and Safety Governed Memory
 
 SSGM is a governed-memory middleware layer for LLM agents with writable
 long-term memory. It sits between runtime memory extraction and the backing
