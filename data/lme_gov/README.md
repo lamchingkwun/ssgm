@@ -1,11 +1,10 @@
 # LME-Gov External Dataset Pointer
 
 The full LME-Gov dataset is not stored in this code repository. It is hosted
-separately. During anonymous review, use the anonymized dataset identifier
-supplied with the submission or set:
+separately as a Hugging Face dataset:
 
 ```text
-LME_GOV_DATASET_ID=<anonymized-dataset-id>
+https://huggingface.co/datasets/siufgdaias/lme-gov
 ```
 
 After downloading or cloning the dataset repository, restore the files under
@@ -27,9 +26,7 @@ For direct Python loading:
 
 ```python
 from datasets import load_dataset
-import os
 
-dataset_id = os.environ["LME_GOV_DATASET_ID"]
-scenarios = load_dataset(dataset_id, "scenarios")
-base_tasks = load_dataset(dataset_id, "base_tasks")
+scenarios = load_dataset("siufgdaias/lme-gov", "scenarios")
+base_tasks = load_dataset("siufgdaias/lme-gov", "base_tasks")
 ```

@@ -2,11 +2,11 @@
 
 This code repository does not vendor benchmark-scale datasets.
 
-The full LME-Gov release is hosted separately. During anonymous review, use
-the anonymized dataset identifier supplied with the submission or set:
+The full LME-Gov release is hosted in the separate Hugging Face dataset
+repository:
 
 ```text
-LME_GOV_DATASET_ID=<anonymized-dataset-id>
+https://huggingface.co/datasets/siufgdaias/lme-gov
 ```
 
 For local scoring with `scripts/score_lme_gov_predictions.py`, download that
@@ -28,9 +28,7 @@ For direct Python loading, use:
 
 ```python
 from datasets import load_dataset
-import os
 
-dataset_id = os.environ["LME_GOV_DATASET_ID"]
-scenarios = load_dataset(dataset_id, "scenarios")
-base_tasks = load_dataset(dataset_id, "base_tasks")
+scenarios = load_dataset("siufgdaias/lme-gov", "scenarios")
+base_tasks = load_dataset("siufgdaias/lme-gov", "base_tasks")
 ```
