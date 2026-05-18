@@ -1,0 +1,5 @@
+numpy>=1.26
+httpx>=0.27
+requests>=2.31
+ijson>=3.2
+datasets>=2.21

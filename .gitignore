@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+outputs/
+*.pyc
+.env
+.DS_Store
+*.log
+data/lme_gov/lme_gov.json
+data/lme_gov/schema.json
+data/lme_gov/DATASET_CARD.md
+data/lme_gov/splits/
