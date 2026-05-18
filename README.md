@@ -5,10 +5,11 @@ long-term memory. It sits between runtime memory extraction and the backing
 memory store, and implements write admission, scoped retrieval,
 provenance-aware checks, contradiction handling, and ledger-backed repair.
 
-The full LME-Gov dataset is hosted separately on Hugging Face:
+The full LME-Gov dataset is hosted separately. During anonymous review, use
+the anonymized dataset identifier supplied with the submission or set:
 
 ```text
-https://huggingface.co/datasets/siufgdaias/lme-gov
+LME_GOV_DATASET_ID=<anonymized-dataset-id>
 ```
 
 ## Repository Contents
@@ -79,16 +80,20 @@ LME-Gov is published as two Hugging Face configs:
 - `base_tasks`: LongMemEval-derived base histories before governance
   perturbations.
 
-Use the Hugging Face `datasets` package:
+Use the Hugging Face `datasets` package. During anonymous review, set
+`LME_GOV_DATASET_ID` to the anonymized dataset mirror supplied with the
+submission; after review, replace it with the final public dataset identifier.
 
 ```python
+import os
 from datasets import load_dataset
 
-scenarios = load_dataset("siufgdaias/lme-gov", "scenarios")
+dataset_id = os.environ["LME_GOV_DATASET_ID"]
+scenarios = load_dataset(dataset_id, "scenarios")
 print(scenarios)
 print(scenarios["test"][0]["scenario_uid"])
 
-base_tasks = load_dataset("siufgdaias/lme-gov", "base_tasks")
+base_tasks = load_dataset(dataset_id, "base_tasks")
 print(base_tasks)
 ```
 
@@ -98,8 +103,9 @@ split:
 ```python
 from datasets import load_dataset
 
+dataset_id = os.environ["LME_GOV_DATASET_ID"]
 stream = load_dataset(
-    "siufgdaias/lme-gov",
+    dataset_id,
     "scenarios",
     split="test",
     streaming=True,
@@ -115,6 +121,7 @@ repository preserves the original builder structure.
 ## Running SSGM On One LME-Gov Scenario
 
 ```python
+import os
 from datasets import load_dataset
 from ssgm import AccessContext, MemoryRecord, SSGMEngine
 
@@ -136,7 +143,8 @@ def to_record(write):
     )
 
 
-row = load_dataset("siufgdaias/lme-gov", "scenarios", split="test[:1]")[0]
+dataset_id = os.environ["LME_GOV_DATASET_ID"]
+row = load_dataset(dataset_id, "scenarios", split="test[:1]")[0]
 engine = SSGMEngine(mode="full_ssgm", stale_after=int(row["stale_after"]))
 
 accepted_keys = []
