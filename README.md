@@ -11,6 +11,146 @@ The full LME-Gov dataset is hosted separately on Hugging Face:
 https://huggingface.co/datasets/siufgdaias/lme-gov
 ```
 
+## Quick Start for Reviewers
+
+The core SSGM path below does not require an API key. API-backed judges and
+NLI components are optional and are described later in this README.
+
+### Linux/macOS
+
+```bash
+git clone <anonymous-github-url>
+cd ssgm
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Windows PowerShell
+
+```powershell
+git clone <anonymous-github-url>
+cd ssgm
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### Minimal smoke run
+
+```bash
+python -c "from ssgm import AccessContext, MemoryRecord, SSGMEngine; engine=SSGMEngine(mode='full_ssgm', stale_after=3); print(engine.write(MemoryRecord(key='alice:preference:coffee', value='Alice prefers espresso.', tenant_id='alice', source='user', timestamp=1, provenance_ok=True))); ctx=AccessContext(actor_id='alice', tenant_id='alice', now_ts=2); print([r.key for r in engine.retrieve('coffee preference', ctx, top_k=5)])"
+```
+
+Expected output:
+
+```text
+True
+['alice:preference:coffee']
+```
+
+### Load the public LME-Gov dataset
+
+```bash
+python -c "from datasets import load_dataset; scenarios=load_dataset('siufgdaias/lme-gov', 'scenarios', split='test[:1]'); base_tasks=load_dataset('siufgdaias/lme-gov', 'base_tasks', split='test[:1]'); print(scenarios[0]['scenario_uid']); print(len(base_tasks))"
+```
+
+### Run SSGM on one LME-Gov scenario
+
+Linux/macOS:
+
+```bash
+python - <<'PY'
+from datasets import load_dataset
+from ssgm import AccessContext, MemoryRecord, SSGMEngine
+
+def to_record(write):
+    return MemoryRecord(
+        key=write["key"],
+        value=write["value"],
+        tenant_id=write["tenant_id"],
+        source=write["source"],
+        timestamp=int(write["timestamp"]),
+        confidence=float(write.get("confidence", 1.0)),
+        mutable=bool(write.get("mutable", True)),
+        provenance_ok=bool(write.get("provenance_ok", True)),
+        provenance_attested=write.get("provenance_attested"),
+        tags=list(write.get("tags") or []),
+        memory_class=write.get("memory_class") or "ordinary",
+        conflict_policy=write.get("conflict_policy") or "auto_update",
+    )
+
+row = load_dataset("siufgdaias/lme-gov", "scenarios", split="test[:1]")[0]
+engine = SSGMEngine(mode="full_ssgm", stale_after=int(row["stale_after"]))
+
+accepted_keys = []
+for write in row["writes"]:
+    record = to_record(write)
+    if engine.write(record, now_ts=int(row["now_ts"])):
+        accepted_keys.append(record.key)
+
+ctx = AccessContext(
+    actor_id=row["probe_context"]["actor_id"],
+    tenant_id=row["probe_context"]["tenant_id"],
+    now_ts=int(row["now_ts"]),
+)
+retrieved = engine.retrieve(row["question"], ctx, top_k=5)
+
+print("scenario:", row["scenario_uid"])
+print("accepted writes:", len(accepted_keys))
+print("retrieved keys:", [record.key for record in retrieved])
+PY
+```
+
+Windows PowerShell:
+
+```powershell
+@'
+from datasets import load_dataset
+from ssgm import AccessContext, MemoryRecord, SSGMEngine
+
+def to_record(write):
+    return MemoryRecord(
+        key=write["key"],
+        value=write["value"],
+        tenant_id=write["tenant_id"],
+        source=write["source"],
+        timestamp=int(write["timestamp"]),
+        confidence=float(write.get("confidence", 1.0)),
+        mutable=bool(write.get("mutable", True)),
+        provenance_ok=bool(write.get("provenance_ok", True)),
+        provenance_attested=write.get("provenance_attested"),
+        tags=list(write.get("tags") or []),
+        memory_class=write.get("memory_class") or "ordinary",
+        conflict_policy=write.get("conflict_policy") or "auto_update",
+    )
+
+row = load_dataset("siufgdaias/lme-gov", "scenarios", split="test[:1]")[0]
+engine = SSGMEngine(mode="full_ssgm", stale_after=int(row["stale_after"]))
+
+accepted_keys = []
+for write in row["writes"]:
+    record = to_record(write)
+    if engine.write(record, now_ts=int(row["now_ts"])):
+        accepted_keys.append(record.key)
+
+ctx = AccessContext(
+    actor_id=row["probe_context"]["actor_id"],
+    tenant_id=row["probe_context"]["tenant_id"],
+    now_ts=int(row["now_ts"]),
+)
+retrieved = engine.retrieve(row["question"], ctx, top_k=5)
+
+print("scenario:", row["scenario_uid"])
+print("accepted writes:", len(accepted_keys))
+print("retrieved keys:", [record.key for record in retrieved])
+'@ | python
+```
+
+The scenario run should print a `scenario` identifier, the number of accepted
+writes, and the retrieved memory keys. To score full prediction files, use
+`scripts/score_lme_gov_predictions.py` as shown in the scoring section below.
+
 ## Repository Contents
 
 - `ssgm/`: core SSGM runtime implementation.
