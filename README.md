@@ -165,52 +165,13 @@ model logs, manuscript source, and table-generation artifacts. External
 benchmarks used in the paper, including LoCoMo, should be obtained from their
 original project sources and are not redistributed here.
 
-## Installation
+## Core Usage
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-The default SSGM smoke path does not require an API key. API-backed judges and
-NLI components read credentials from environment variables or explicit
-constructor arguments.
-
-## Minimal SSGM Example
-
-```python
-from ssgm import AccessContext, MemoryRecord, SSGMEngine
-
-engine = SSGMEngine(mode="full_ssgm", stale_after=3)
-
-accepted = engine.write(MemoryRecord(
-    key="alice:preference:coffee",
-    value="Alice prefers espresso.",
-    tenant_id="alice",
-    source="user",
-    timestamp=1,
-    provenance_ok=True,
-))
-print("accepted:", accepted)
-print("write reason:", engine.last_write_result.reason)
-
-ctx = AccessContext(actor_id="alice", tenant_id="alice", now_ts=2)
-records = engine.retrieve("coffee preference", ctx, top_k=5)
-print([record.key for record in records])
-```
-
-Run it directly:
-
-```bash
-python - <<'PY'
-from ssgm import AccessContext, MemoryRecord, SSGMEngine
-engine = SSGMEngine(mode="full_ssgm", stale_after=3)
-engine.write(MemoryRecord(key="alice:preference:coffee", value="Alice prefers espresso.", tenant_id="alice", source="user", timestamp=1, provenance_ok=True))
-ctx = AccessContext(actor_id="alice", tenant_id="alice", now_ts=2)
-print([record.key for record in engine.retrieve("coffee preference", ctx, top_k=5)])
-PY
-```
+The reviewer quick start above gives copy-paste commands for installation, a
+minimal SSGM smoke run, dataset loading, and running one LME-Gov scenario. In
+regular use, import `SSGMEngine`, `MemoryRecord`, and `AccessContext` from
+`ssgm`, write structured candidate records into the engine, then retrieve under
+an explicit access context.
 
 ## Loading LME-Gov
 
@@ -254,54 +215,11 @@ The split JSONL files expose `expected_answer_items`, a stable list of
 `{"key", "value"}` objects. The full nested source JSON in the dataset
 repository preserves the original builder structure.
 
-## Running SSGM On One LME-Gov Scenario
+## Running SSGM On LME-Gov
 
-```python
-from datasets import load_dataset
-from ssgm import AccessContext, MemoryRecord, SSGMEngine
-
-
-def to_record(write):
-    return MemoryRecord(
-        key=write["key"],
-        value=write["value"],
-        tenant_id=write["tenant_id"],
-        source=write["source"],
-        timestamp=int(write["timestamp"]),
-        confidence=float(write.get("confidence", 1.0)),
-        mutable=bool(write.get("mutable", True)),
-        provenance_ok=bool(write.get("provenance_ok", True)),
-        provenance_attested=write.get("provenance_attested"),
-        tags=list(write.get("tags") or []),
-        memory_class=write.get("memory_class") or "ordinary",
-        conflict_policy=write.get("conflict_policy") or "auto_update",
-    )
-
-
-row = load_dataset("siufgdaias/lme-gov", "scenarios", split="test[:1]")[0]
-engine = SSGMEngine(mode="full_ssgm", stale_after=int(row["stale_after"]))
-
-accepted_keys = []
-for write in row["writes"]:
-    record = to_record(write)
-    if engine.write(record, now_ts=int(row["now_ts"])):
-        accepted_keys.append(record.key)
-
-ctx = AccessContext(
-    actor_id=row["probe_context"]["actor_id"],
-    tenant_id=row["probe_context"]["tenant_id"],
-    now_ts=int(row["now_ts"]),
-)
-retrieved = engine.retrieve(row["question"], ctx, top_k=5)
-
-print("scenario:", row["scenario_uid"])
-print("accepted writes:", len(accepted_keys))
-print("retrieved keys:", [record.key for record in retrieved])
-```
-
-This example uses structured candidate records from LME-Gov. Raw-to-record
-induction is a separate setting: raw text is first converted into candidate
-records, then the same SSGM write gate is applied.
+The quick-start scenario command uses structured candidate records from
+LME-Gov. Raw-to-record induction is a separate setting: raw text is first
+converted into candidate records, then the same SSGM write gate is applied.
 
 ## Scoring LME-Gov Predictions
 
