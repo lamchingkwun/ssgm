@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "Please cite the SSGM paper and LongMemEval when using this software and LME-Gov."
+type: software
+title: "SSGM: Stability and Safety Governed Memory"
+version: "1.0"
+license: MIT
+authors:
+  - name: "Chingkwun Lam"
+    affiliation: "Jinan University"
+  - name: "Jiaxin Li"
+    affiliation: "Jinan University"
+  - name: "KoPang"
+    affiliation: "Jinan University"
+  - name: "Lingfei Zhang"
+    affiliation: "Jinan University"
+  - name: "Zhao Kuo"
+    affiliation: "Jinan University"
+preferred-citation:
+  type: conference-paper
+  title: "SSGM: A Framework and Evaluation Protocol for Governed Memory in Agentic AI Systems"
+  year: 2026
+  authors:
+    - name: "Chingkwun Lam"
+    - name: "Jiaxin Li"
+    - name: "KoPang"
+    - name: "Lingfei Zhang"
+    - name: "Zhao Kuo"

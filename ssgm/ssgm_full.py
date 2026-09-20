@@ -1,167 +1,92 @@
+"""Explicit configurations for Ollama, hosted judges, and compact NLI.
+
+The default uses local Ollama for both write judging and NLI. Model services
+and weights must be available before writes are evaluated. For a no-model
+smoke test, instantiate SSGMEngine(use_embeddings=False) directly.
 """
-ssgm_full.py
-============
-Convenience factory for creating a fully-equipped SSGM engine with all layers:
-
-  Layer 1 — Provenance (embedding k-NN + trusted/malicious source rules)
-  Layer 2 — Contradiction Gate (three-way TMS decision)
-  Layer 3 — Optional NLI adjudicator
-  Layer 4 — Weibull Decay
-  Layer 5 — Anchor-grounded Reconciliation
-
-Usage:
-    from ssgm.ssgm_full import create_full_engine
-
-    engine = create_full_engine(
-        mode='full_ssgm',
-        api_key='',                 # optional for API-backed providers
-        model='qwen3.5:9b',         # local Ollama or API-backed model
-        weibull_eta=2.0,            # Weibull scale parameter
-        weibull_kappa=1.0,          # Weibull shape parameter
-        stale_threshold=0.3,         # Weibull freshness threshold
-        nli_abstention=0.7,         # NLI confidence threshold for abstention
-        mcore_min_conf=0.75,         # M_core confidence threshold
-    )
-
-When no API key is provided, the factory defaults to local Ollama-style
-operation and otherwise uses the configured OpenAI-compatible endpoint.
-"""
-
 from __future__ import annotations
 
 import os
 from typing import Optional
-
 from .governor import SSGMEngine, WeibullDecayConfig
 from .memory_query import MCoreQueryConfig
-from .nli_adjudicator import NLIBasedAdjudicator
-from .provenance_detector import ProvenanceDetector
+from .nli_adjudicator import NLIBasedAdjudicator, CompactNLIBasedAdjudicator
 from .llm_judge import get_judge
+from .compact_nli_backend import DEFAULT_COMPACT_NLI_MODEL
 
 
 def create_full_engine(
     mode: str = "full_ssgm",
     api_key: Optional[str] = None,
-    model: str = "qwen3.5:9b",
+    model: Optional[str] = None,
     base_url: Optional[str] = None,
     weibull_eta: float = 2.0,
     weibull_kappa: float = 1.0,
     stale_threshold: float = 0.3,
-    nli_abstention: float = 0.4,  # 0.4 recommended for qwen3.5 (lenient model)
+    nli_abstention: float = 0.4,
     mcore_min_conf: float = 0.75,
     use_weibull: bool = True,
     provenance_k_neighbours: int = 5,
     provenance_anomaly_threshold: float = 0.7,
-    judge_backend: str = "compact_nli",
+    judge_backend: str = "ollama",
     strict_api_failures: bool = True,
+    enable_nli: bool = True,
+    use_embeddings: bool = True,
+    allow_embedding_fallback: bool = False,
+    embedding_model: str = "nomic-embed-text-v2-moe",
+    embedding_base_url: Optional[str] = None,
 ) -> SSGMEngine:
-    """
-    Create a fully-equipped SSGM engine with all theoretical layers implemented.
+    """Build a governed engine with explicitly selected model services.
 
-    Args:
-        mode: SSGM governance mode (default: 'full_ssgm')
-        api_key: Optional API key for OpenAI-compatible endpoints. Leave empty
-                 for local Ollama-style deployments.
-        model: LLM model name for the write judge and optional NLI
-               adjudicator (default: 'qwen3.5:9b').
-        base_url: API base URL. For Ollama use 'http://localhost:11434/v1'.
-                  If None, the factory chooses a local Ollama endpoint when no
-                  key is supplied and a hosted OpenAI-compatible endpoint
-                  otherwise.
-        weibull_eta: Weibull scale parameter η (default: 2.0)
-        weibull_kappa: Weibull shape parameter κ (default: 1.0)
-        stale_threshold: Weibull relevance threshold below which memory is stale
-                        (default: 0.3)
-        nli_abstention: Minimum LLM confidence to accept NLI verdict;
-                        below this the adjudicator abstains (default: 0.7)
-        mcore_min_conf: Minimum confidence for mutable records to qualify
-                       as M_core established facts (default: 0.75)
-        use_weibull: Use Weibull decay instead of simple threshold for freshness
-                     (default: True)
-        provenance_k_neighbours: k for embedding k-NN anomaly detection (default: 5)
-        provenance_anomaly_threshold: Max avg k-NN cosine distance to qualify
-                                     as non-anomalous (default: 0.7)
-        judge_backend: Write-judge backend for allow/quarantine/block.
-                      Supported by `ssgm.llm_judge.get_judge`; defaults to
-                      `compact_nli` so the default path stays offline,
-                      reproducible, and independent of heuristic-only judging.
-        strict_api_failures: If True, provider initialization or call failures
-                     raise instead of silently disabling judge/NLI components.
-
-    Returns:
-        SSGMEngine with all layers configured and wired together.
+    Supported backends: ollama, compact_nli, openai_responses, minimax.
+    nli_abstention defaults to 0.4. Compact models require the optional
+    torch, transformers and sentencepiece packages and may download weights initially.
+    Embedding failures raise unless allow_embedding_fallback=True.
+    This is a runtime configuration, not the paper's experiment harness.
     """
-    # Auto-detect provider from base_url and api_key
-    if base_url:
-        if "localhost" in base_url or "ollama" in base_url.lower():
-            provider = "ollama"
-        else:
-            provider = "openai"
-    elif api_key in (None, ""):
-        # No API key → use Ollama on localhost
-        provider = "ollama"
-        base_url = base_url or "http://localhost:11434/v1"
+    defaults = {
+        "ollama": ("qwen3.5:9b", "http://localhost:11434/v1", None),
+        "compact_nli": (DEFAULT_COMPACT_NLI_MODEL, None, None),
+        "openai_responses": ("gpt-5.4", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+        "minimax": ("MiniMax-M2.1", "https://api.minimax.chat/v1", "MINIMAX_API_KEY"),
+    }
+    if judge_backend not in defaults:
+        raise ValueError("Select ollama, compact_nli, openai_responses, or minimax explicitly")
+    default_model, default_url, key_env = defaults[judge_backend]
+    model = model or default_model
+    if judge_backend == "compact_nli" and ":" in model:
+        raise ValueError("compact_nli requires a Hugging Face sequence-classification model, not an Ollama tag")
+    if judge_backend == "openai_responses":
+        base_url = base_url or os.getenv("OPENAI_BASE_URL") or default_url
     else:
-        provider = "minimax"
-        base_url = base_url or "https://api.minimax.chat/v1"
+        base_url = base_url or default_url
+    resolved_key = api_key or (os.getenv(key_env) if key_env else None)
+    if key_env and not resolved_key:
+        raise ValueError(f"{key_env} or an explicit api_key is required")
 
-    # Weibull decay config
-    weibull_config = WeibullDecayConfig(
-        eta=weibull_eta,
-        kappa=weibull_kappa,
-        threshold=stale_threshold,
-    )
-
-    # M_core query config (shared between governor and NLI)
-    mcore_config = MCoreQueryConfig(
-        min_confidence=mcore_min_conf,
-        include_mutable=True,
-    )
-
-    # Layer 2: Provenance detector
-    provenance_detector = ProvenanceDetector(
-        k_neighbours=provenance_k_neighbours,
-        anomaly_threshold=provenance_anomaly_threshold,
-    )
-
-    # Layer 3: NLI adjudicator (optional)
-    nli_adjudicator = None
-    resolved_key = api_key or os.getenv("MINIMAX_API_KEY", "")
-
-    if provider == "ollama" or resolved_key:
-        try:
-            nli_adjudicator = NLIBasedAdjudicator(
-                api_key=resolved_key,
-                model=model,
-                base_url=base_url,
-                abstention_threshold=nli_abstention,  # 0.4 recommended for qwen3.5
+    judge = get_judge(judge_backend, model=model, base_url=base_url,
+                      api_key=resolved_key, strict_api_failures=strict_api_failures)
+    nli = None
+    if enable_nli:
+        if judge_backend == "compact_nli":
+            nli = CompactNLIBasedAdjudicator(model=model, abstention_threshold=nli_abstention)
+        else:
+            nli = NLIBasedAdjudicator(
+                api_key=resolved_key, model=model, base_url=base_url,
+                abstention_threshold=nli_abstention,
+                wire_api="responses" if judge_backend == "openai_responses" else "chat_completions",
                 strict_api_failures=strict_api_failures,
             )
-            if provider == "ollama":
-                print(f"[ssgm_full] INFO: Level 3 NLI enabled via Ollama ({model} at {base_url}).")
-            else:
-                print(f"[ssgm_full] INFO: Level 3 NLI enabled via {provider} ({model}).")
-        except Exception as e:
-            if strict_api_failures:
-                raise RuntimeError("Failed to initialize Level 3 NLI in strict API mode") from e
-            print(f"[ssgm_full] WARNING: Failed to initialize Level 3 NLI: {e}")
-            print(f"[ssgm_full] Level 3 NLI disabled. INSUFFICIENT_EVIDENCE will defer to reconciliation.")
-            nli_adjudicator = None
-
-    llm_judge = get_judge(
-        judge_backend,
-        model=model if judge_backend in {"ollama", "minimax", "compact_nli", "openai_responses"} else None,
-        base_url=base_url if judge_backend in {"ollama", "openai_responses"} else None,
-        api_key=resolved_key if judge_backend in {"minimax", "openai_responses"} else None,
-        strict_api_failures=strict_api_failures,
-    )
-
-    return SSGMEngine(
+    engine = SSGMEngine(
         mode=mode,
-        weibull_config=weibull_config,
-        provenance_detector=provenance_detector,
-        nli_adjudicator=nli_adjudicator,
-        mcore_config=mcore_config,
-        use_weibull=use_weibull,
-        llm_judge=llm_judge,
+        weibull_config=WeibullDecayConfig(eta=weibull_eta, kappa=weibull_kappa,
+                                         threshold=stale_threshold),
+        nli_adjudicator=nli, llm_judge=judge,
+        mcore_config=MCoreQueryConfig(min_confidence=mcore_min_conf, include_mutable=True),
+        use_weibull=use_weibull, use_embeddings=use_embeddings,
+        allow_embedding_fallback=allow_embedding_fallback,
+        embedding_model=embedding_model, embedding_base_url=embedding_base_url,
     )
+    engine.provenance_detector.k_neighbours = provenance_k_neighbours
+    engine.provenance_detector.anomaly_threshold = provenance_anomaly_threshold
+    return engine

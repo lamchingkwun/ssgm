@@ -19,6 +19,7 @@ Compatibility rule:
 """
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import random
@@ -88,11 +89,26 @@ def _normalize_result(
         "user_intent_alignment": user_intent_alignment,
     }
 
-def _write_cache_key(write: dict) -> tuple:
+def _write_cache_key(write: dict, judge=None) -> tuple:
+    """Identify the full candidate, control fields, and judging policy."""
+    policy = {
+        "version": 2,
+        "backend": getattr(judge, "name", ""),
+        "model": getattr(judge, "model", ""),
+        "endpoint": getattr(judge, "base_url", getattr(judge, "API_URL", "")),
+        "system_prompt": getattr(judge, "SYSTEM_PROMPT", ""),
+        "labels": [getattr(judge, name, []) for name in (
+            "DECISION_LABELS", "WRITE_ROLE_LABELS", "SOURCE_TRUST_LABELS",
+            "INTENT_ALIGNMENT_LABELS", "HYPOTHESIS_TEMPLATE")],
+    }
+    policy_hash = hashlib.sha256(
+        json.dumps(policy, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    content = str(write.get("content", write.get("value", "")) or "")
     return (
-        write["key"],
-        write.get("content", write.get("value", ""))[:200],
-        write["source"],
+        policy_hash, str(write.get("key", "")), hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        str(write.get("source", "")), write.get("provenance_attested"),
+        bool(write.get("require_provenance_attestation", False)),
     )
 
 
@@ -518,7 +534,11 @@ class MiniMaxJudge(LLMJudge):
         provenance_attested: Optional[bool] = None,
         require_provenance_attestation: bool = False,
     ) -> dict:
-        cache_key = (key, (content or "")[:200], source)
+        cache_key = _write_cache_key({
+            "key": key, "content": content, "source": source,
+            "provenance_attested": provenance_attested,
+            "require_provenance_attestation": require_provenance_attestation,
+        }, self)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -574,7 +594,7 @@ class MiniMaxJudge(LLMJudge):
     def classify_batch(self, writes: List[dict]) -> Dict[tuple, dict]:
         if not writes:
             return {}
-        uncached_writes = [write for write in writes if _write_cache_key(write) not in self._cache]
+        uncached_writes = [write for write in writes if _write_cache_key(write, self) not in self._cache]
         for chunk in _batched(uncached_writes, BATCH_CACHE_REPAIR_CHUNK_SIZE):
             lines = []
             for i, w in enumerate(chunk):
@@ -606,7 +626,7 @@ class MiniMaxJudge(LLMJudge):
                 content_str = self._extract_content(data)
                 results = _normalize_batch_payload(content_str)
                 for i, w in enumerate(chunk):
-                    cache_key = _write_cache_key(w)
+                    cache_key = _write_cache_key(w, self)
                     if i < len(results):
                         r = results[i]
                         try:
@@ -629,7 +649,7 @@ class MiniMaxJudge(LLMJudge):
                 missing_writes = list(chunk)
 
             for w in missing_writes:
-                self._cache.pop(_write_cache_key(w), None)
+                self._cache.pop(_write_cache_key(w, self), None)
                 self.classify(
                     w.get("content", w.get("value", "")),
                     w.get("source", ""),
@@ -638,7 +658,7 @@ class MiniMaxJudge(LLMJudge):
                     require_provenance_attestation=bool(w.get("require_provenance_attestation", False)),
                 )
 
-        return {_write_cache_key(w): self._cache[_write_cache_key(w)] for w in writes}
+        return {_write_cache_key(w, self): self._cache[_write_cache_key(w, self)] for w in writes}
 
 
 class OpenAIResponsesJudge(LLMJudge):
@@ -726,7 +746,11 @@ class OpenAIResponsesJudge(LLMJudge):
         provenance_attested: Optional[bool] = None,
         require_provenance_attestation: bool = False,
     ) -> dict:
-        cache_key = (key, (content or "")[:200], source)
+        cache_key = _write_cache_key({
+            "key": key, "content": content, "source": source,
+            "provenance_attested": provenance_attested,
+            "require_provenance_attestation": require_provenance_attestation,
+        }, self)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -759,7 +783,7 @@ class OpenAIResponsesJudge(LLMJudge):
     def classify_batch(self, writes: List[dict]) -> Dict[tuple, dict]:
         if not writes:
             return {}
-        uncached_writes = [write for write in writes if _write_cache_key(write) not in self._cache]
+        uncached_writes = [write for write in writes if _write_cache_key(write, self) not in self._cache]
         for chunk in _batched(uncached_writes, BATCH_CACHE_REPAIR_CHUNK_SIZE):
             lines = []
             for i, w in enumerate(chunk):
@@ -786,7 +810,7 @@ class OpenAIResponsesJudge(LLMJudge):
                 if self.strict_api_failures and len(results) != len(chunk):
                     results = []
                 for i, w in enumerate(chunk):
-                    cache_key = _write_cache_key(w)
+                    cache_key = _write_cache_key(w, self)
                     if i < len(results):
                         self._cache[cache_key] = self._normalize_parsed_result(
                             results[i],
@@ -798,7 +822,7 @@ class OpenAIResponsesJudge(LLMJudge):
                 missing_writes = list(chunk)
 
             for w in missing_writes:
-                self._cache.pop(_write_cache_key(w), None)
+                self._cache.pop(_write_cache_key(w, self), None)
                 self.classify(
                     w.get("content", w.get("value", "")),
                     w.get("source", ""),
@@ -807,7 +831,7 @@ class OpenAIResponsesJudge(LLMJudge):
                     require_provenance_attestation=bool(w.get("require_provenance_attestation", False)),
                 )
 
-        return {_write_cache_key(w): self._cache[_write_cache_key(w)] for w in writes}
+        return {_write_cache_key(w, self): self._cache[_write_cache_key(w, self)] for w in writes}
 
 
 class CompactNLIJudge(LLMJudge):
@@ -1034,7 +1058,11 @@ class CompactNLIJudge(LLMJudge):
         provenance_attested: Optional[bool] = None,
         require_provenance_attestation: bool = False,
     ) -> dict:
-        cache_key = (key, (content or "")[:200], source, provenance_attested, require_provenance_attestation)
+        cache_key = _write_cache_key({
+            "key": key, "content": content, "source": source,
+            "provenance_attested": provenance_attested,
+            "require_provenance_attestation": require_provenance_attestation,
+        }, self)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -1093,13 +1121,7 @@ class CompactNLIJudge(LLMJudge):
         premises: list[str] = []
         for write in writes:
             content = write.get("content", write.get("value", ""))
-            cache_key = (
-                write.get("key", ""),
-                str(content)[:200],
-                write.get("source", ""),
-                write.get("provenance_attested"),
-                bool(write.get("require_provenance_attestation", False)),
-            )
+            cache_key = _write_cache_key(write, self)
             if cache_key in self._cache:
                 continue
             pending.append(write)
@@ -1145,13 +1167,7 @@ class CompactNLIJudge(LLMJudge):
                 trust_batches,
                 alignment_batches,
             ):
-                cache_key = (
-                    write.get("key", ""),
-                    str(write.get("content", write.get("value", "")))[:200],
-                    write.get("source", ""),
-                    write.get("provenance_attested"),
-                    bool(write.get("require_provenance_attestation", False)),
-                )
+                cache_key = _write_cache_key(write, self)
                 self._cache[cache_key] = self._scores_to_result(
                     str(write.get("content", write.get("value", ""))),
                     str(write.get("source", "")),
@@ -1166,16 +1182,7 @@ class CompactNLIJudge(LLMJudge):
                     require_provenance_attestation=bool(write.get("require_provenance_attestation", False)),
                 )
 
-        return {
-            (w["key"], w.get("content", w.get("value", ""))[:200], w["source"]): self._cache[(
-                w["key"],
-                w.get("content", w.get("value", ""))[:200],
-                w["source"],
-                w.get("provenance_attested"),
-                bool(w.get("require_provenance_attestation", False)),
-            )]
-            for w in writes
-        }
+        return {_write_cache_key(w, self): self._cache[_write_cache_key(w, self)] for w in writes}
 
 
 class OllamaJudge(LLMJudge):
@@ -1239,7 +1246,11 @@ class OllamaJudge(LLMJudge):
         provenance_attested: Optional[bool] = None,
         require_provenance_attestation: bool = False,
     ) -> dict:
-        cache_key = (key, content[:200], source)
+        cache_key = _write_cache_key({
+            "key": key, "content": content, "source": source,
+            "provenance_attested": provenance_attested,
+            "require_provenance_attestation": require_provenance_attestation,
+        }, self)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -1292,7 +1303,7 @@ class OllamaJudge(LLMJudge):
     def classify_batch(self, writes: List[dict]) -> Dict[tuple, dict]:
         if not writes:
             return {}
-        uncached_writes = [write for write in writes if _write_cache_key(write) not in self._cache]
+        uncached_writes = [write for write in writes if _write_cache_key(write, self) not in self._cache]
         for chunk in _batched(uncached_writes, BATCH_CACHE_REPAIR_CHUNK_SIZE):
             lines = []
             for i, w in enumerate(chunk):
@@ -1324,7 +1335,7 @@ class OllamaJudge(LLMJudge):
                 content_str = _extract_chat_message_text(data)
                 results = _normalize_batch_payload(content_str)
                 for i, w in enumerate(chunk):
-                    cache_key = _write_cache_key(w)
+                    cache_key = _write_cache_key(w, self)
                     if i < len(results):
                         r = results[i]
                         self._cache[cache_key] = _normalize_result(
@@ -1342,7 +1353,7 @@ class OllamaJudge(LLMJudge):
                 missing_writes = list(chunk)
 
             for w in missing_writes:
-                self._cache.pop(_write_cache_key(w), None)
+                self._cache.pop(_write_cache_key(w, self), None)
                 self.classify(
                     w.get("content", w.get("value", "")),
                     w.get("source", ""),
@@ -1351,7 +1362,7 @@ class OllamaJudge(LLMJudge):
                     require_provenance_attestation=bool(w.get("require_provenance_attestation", False)),
                 )
 
-        return {_write_cache_key(w): self._cache[_write_cache_key(w)] for w in writes}
+        return {_write_cache_key(w, self): self._cache[_write_cache_key(w, self)] for w in writes}
 
 
 def get_judge(

@@ -1,3 +1,5 @@
+__version__ = "1.0"
+
 from .models import MemoryRecord, MemoryEvent, AccessContext
 from .governor import SSGMEngine, WeibullDecayConfig, GovernanceCapabilities, MODE_CAPABILITIES, WriteResult
 from .ledger import EvidenceLedger, LedgerIntegrityReport

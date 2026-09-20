@@ -1,5 +1,9 @@
 # Third-Party Notices
 
+The original LongMemEval copyright and permission notice is reproduced in
+`third_party/LongMemEval-LICENSE`. It applies to the inherited LongMemEval
+material; this release does not replace it with the SSGM copyright notice.
+
 This repository contains the SSGM code release. The full LME-Gov dataset is
 hosted separately in the Hugging Face dataset repository.
 

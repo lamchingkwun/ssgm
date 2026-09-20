@@ -18,8 +18,7 @@ data/lme_gov/lme_gov.json
 data/lme_gov/splits/scenarios/test.jsonl.gz
 ```
 
-Keeping the dataset outside the GitHub code repository avoids large-file
-failures and keeps this code artifact compact for review and replication.
+Keeping the dataset outside the code repository avoids large-file limits.
 Other third-party evaluation benchmarks used in the manuscript, including
 LoCoMo, should be obtained from their original project sources and are not
 redistributed here.

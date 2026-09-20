@@ -99,8 +99,12 @@ class ProvenanceDetector:
         use_llm: bool = False,
         embedding_base_url: str = DEFAULT_OLLAMA_BASE_URL,
         require_attestation_for_trusted_sources: bool = False,
+        use_embeddings: bool = True,
+        allow_embedding_fallback: bool = False,
     ) -> None:
         self.k_neighbours = k_neighbours
+        self.use_embeddings = use_embeddings
+        self.allow_embedding_fallback = allow_embedding_fallback
         self.anomaly_threshold = anomaly_threshold
         self.embedding_model_name = embedding_model
         self.embedding_base_url = embedding_base_url
@@ -227,12 +231,11 @@ class ProvenanceDetector:
     def _embedding_anomaly_score(self, record, ledger, existing_embeddings: dict) -> Tuple[float, List[str]]:
         """Compute k-NN anomaly score for a record using semantic embeddings.
 
-        Falls back to the confidence-based heuristic on ANY error
-        (network timeout, Ollama unavailability, encoding error, etc.)
-        so the experiment never crashes if the embedding service is unreachable.
+        Embedding failures propagate unless fallback was explicitly enabled.
+        Disabling embeddings selects the confidence-based path deliberately.
         """
         # ── Load model (cached after first call) ────────────────────────
-        if self._model_load_failed:
+        if not self.use_embeddings or self._model_load_failed:
             return self._confidence_anomaly_fallback(record)
 
         if self._model is None:
@@ -242,6 +245,8 @@ class ProvenanceDetector:
                     base_url=self.embedding_base_url,
                 )
             except Exception as e:
+                if not self.allow_embedding_fallback:
+                    raise RuntimeError("Provenance embedding initialization failed") from e
                 print(f"[ProvenanceDetector] WARNING: model load failed "
                       f"'{self.embedding_model_name}': {e}. "
                       f"Falling back to heuristic.")
@@ -255,6 +260,8 @@ class ProvenanceDetector:
         try:
             new_embedding = self._model.encode(str(record.value), convert_to_numpy=True)
         except Exception as e:
+            if not self.allow_embedding_fallback:
+                raise RuntimeError("Provenance embedding failed") from e
             print(f"[ProvenanceDetector] WARNING: encode(new) failed: {e}. "
                   f"Falling back to heuristic.")
             return self._confidence_anomaly_fallback(record)
@@ -300,6 +307,8 @@ class ProvenanceDetector:
 
             context_embeddings = np.array(context_embeddings)
         except Exception as e:
+            if not self.allow_embedding_fallback:
+                raise RuntimeError("Provenance context embedding failed") from e
             print(f"[ProvenanceDetector] WARNING: encode(context) failed: {e}. "
                   f"Falling back to heuristic.")
             return self._confidence_anomaly_fallback(record)

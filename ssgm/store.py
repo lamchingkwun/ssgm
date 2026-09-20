@@ -136,10 +136,12 @@ class SemanticStore:
         embedding_model: str = DEFAULT_OLLAMA_EMBED_MODEL,
         use_embeddings: bool = True,
         base_url: Optional[str] = None,
+        allow_embedding_fallback: bool = False,
     ) -> None:
         self.records: Dict[str, MemoryRecord] = {}
         self.version_index = VersionIndex()
         self.use_embeddings = use_embeddings
+        self.allow_embedding_fallback = allow_embedding_fallback
         self.embedding_model_name = embedding_model
         self.embedding_backend = "ollama"
         self.embedding_base_url = (base_url or os.getenv("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL).rstrip("/")
@@ -163,11 +165,15 @@ class SemanticStore:
             try:
                 self._model = self._get_model()
             except Exception:
+                if not self.allow_embedding_fallback:
+                    raise
                 self._model_load_failed = True
                 return None
         try:
             return self._model.encode(str(text), convert_to_numpy=True)
         except Exception:
+            if not self.allow_embedding_fallback:
+                raise
             self._model_load_failed = True
             return None
 
@@ -175,11 +181,13 @@ class SemanticStore:
         return self.records.get(key)
 
     def upsert(self, record: MemoryRecord) -> None:
+        emb = self._maybe_encode(record.value)
         self.records[record.key] = record
         self.version_index.append(record)
-        emb = self._maybe_encode(record.value)
         if emb is not None:
             self._record_embeddings[record.key] = emb
+        else:
+            self._record_embeddings.pop(record.key, None)
 
     def list_all(self) -> List[MemoryRecord]:
         return list(self.records.values())
@@ -191,10 +199,12 @@ class SemanticStore:
         target = self.version_index.rollback_target(key, version)
         if target is None:
             return None
-        self.records[key] = target
         emb = self._maybe_encode(target.value)
+        self.records[key] = target
         if emb is not None:
             self._record_embeddings[key] = emb
+        else:
+            self._record_embeddings.pop(key, None)
         return target
 
     def semantic_search(self, query: str, tenant_id: Optional[str] = None, top_k: int = 5) -> List[MemoryRecord]:

@@ -1,304 +1,189 @@
 # SSGM: Stability and Safety Governed Memory
 
-SSGM is a governed-memory middleware layer for LLM agents with writable
-long-term memory. It sits between runtime memory extraction and the backing
-memory store, and implements write admission, scoped retrieval,
-provenance-aware checks, contradiction handling, and ledger-backed repair.
+SSGM governs writes, reads and repairs in persistent agent memory. It provides
+structured-record admission, scoped retrieval, contradiction handling and an
+auditable evidence ledger.
 
-The full LME-Gov dataset is hosted separately on Hugging Face:
+**Version 1.0 · Python 3.10+**
 
-```text
-https://huggingface.co/datasets/siufgdaias/lme-gov
-```
+See [CHANGELOG.md](CHANGELOG.md) for changes and
+[REPRODUCIBILITY.md](REPRODUCIBILITY.md) for experiment versions and metrics.
 
-## Quick Start for Reviewers
+Authors: Chingkwun Lam, Jiaxin Li, KoPang, Lingfei Zhang and Zhao Kuo,
+Jinan University. Corresponding author: Zhao Kuo.
 
-The core SSGM path below does not require an API key. API-backed judges and
-NLI components are optional and are described later in this README.
+## Install and test
 
-### Linux/macOS
+From the unpacked code directory:
 
 ```bash
-# Download and unpack the anonymized repository from:
-# https://anonymous.4open.science/r/ssgm-7325/
-cd ssgm
 python -m venv .venv
+# Linux/macOS:
 source .venv/bin/activate
-pip install -r requirements.txt
+# Windows PowerShell instead:
+# .\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
 ```
 
-### Windows PowerShell
-
-```powershell
-# Download and unpack the anonymized repository from:
-# https://anonymous.4open.science/r/ssgm-7325/
-cd ssgm
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-### Minimal smoke run
-
-```bash
-python -c "from ssgm import AccessContext, MemoryRecord, SSGMEngine; engine=SSGMEngine(mode='full_ssgm', stale_after=3); print(engine.write(MemoryRecord(key='alice:preference:coffee', value='Alice prefers espresso.', tenant_id='alice', source='user', timestamp=1, provenance_ok=True))); ctx=AccessContext(actor_id='alice', tenant_id='alice', now_ts=2); print([r.key for r in engine.retrieve('coffee preference', ctx, top_k=5)])"
-```
-
-Expected output:
-
-```text
-True
-['alice:preference:coffee']
-```
-
-### Load the public LME-Gov dataset
-
-```bash
-python -c "from datasets import load_dataset; scenarios=load_dataset('siufgdaias/lme-gov', 'scenarios', split='test[:1]'); base_tasks=load_dataset('siufgdaias/lme-gov', 'base_tasks', split='test[:1]'); print(scenarios[0]['scenario_uid']); print(len(base_tasks))"
-```
-
-### Run SSGM on one LME-Gov scenario
-
-Linux/macOS:
-
-```bash
-python - <<'PY'
-from datasets import load_dataset
-from ssgm import AccessContext, MemoryRecord, SSGMEngine
-
-def to_record(write):
-    return MemoryRecord(
-        key=write["key"],
-        value=write["value"],
-        tenant_id=write["tenant_id"],
-        source=write["source"],
-        timestamp=int(write["timestamp"]),
-        confidence=float(write.get("confidence", 1.0)),
-        mutable=bool(write.get("mutable", True)),
-        provenance_ok=bool(write.get("provenance_ok", True)),
-        provenance_attested=write.get("provenance_attested"),
-        tags=list(write.get("tags") or []),
-        memory_class=write.get("memory_class") or "ordinary",
-        conflict_policy=write.get("conflict_policy") or "auto_update",
-    )
-
-row = load_dataset("siufgdaias/lme-gov", "scenarios", split="test[:1]")[0]
-engine = SSGMEngine(mode="full_ssgm", stale_after=int(row["stale_after"]))
-
-accepted_keys = []
-for write in row["writes"]:
-    record = to_record(write)
-    if engine.write(record, now_ts=int(row["now_ts"])):
-        accepted_keys.append(record.key)
-
-ctx = AccessContext(
-    actor_id=row["probe_context"]["actor_id"],
-    tenant_id=row["probe_context"]["tenant_id"],
-    now_ts=int(row["now_ts"]),
-)
-retrieved = engine.retrieve(row["question"], ctx, top_k=5)
-
-print("scenario:", row["scenario_uid"])
-print("accepted writes:", len(accepted_keys))
-print("retrieved keys:", [record.key for record in retrieved])
-PY
-```
-
-Windows PowerShell:
-
-```powershell
-@'
-from datasets import load_dataset
-from ssgm import AccessContext, MemoryRecord, SSGMEngine
-
-def to_record(write):
-    return MemoryRecord(
-        key=write["key"],
-        value=write["value"],
-        tenant_id=write["tenant_id"],
-        source=write["source"],
-        timestamp=int(write["timestamp"]),
-        confidence=float(write.get("confidence", 1.0)),
-        mutable=bool(write.get("mutable", True)),
-        provenance_ok=bool(write.get("provenance_ok", True)),
-        provenance_attested=write.get("provenance_attested"),
-        tags=list(write.get("tags") or []),
-        memory_class=write.get("memory_class") or "ordinary",
-        conflict_policy=write.get("conflict_policy") or "auto_update",
-    )
-
-row = load_dataset("siufgdaias/lme-gov", "scenarios", split="test[:1]")[0]
-engine = SSGMEngine(mode="full_ssgm", stale_after=int(row["stale_after"]))
-
-accepted_keys = []
-for write in row["writes"]:
-    record = to_record(write)
-    if engine.write(record, now_ts=int(row["now_ts"])):
-        accepted_keys.append(record.key)
-
-ctx = AccessContext(
-    actor_id=row["probe_context"]["actor_id"],
-    tenant_id=row["probe_context"]["tenant_id"],
-    now_ts=int(row["now_ts"]),
-)
-retrieved = engine.retrieve(row["question"], ctx, top_k=5)
-
-print("scenario:", row["scenario_uid"])
-print("accepted writes:", len(accepted_keys))
-print("retrieved keys:", [record.key for record in retrieved])
-'@ | python
-```
-
-The scenario run should print a `scenario` identifier, the number of accepted
-writes, and the retrieved memory keys. To score full prediction files, use
-`scripts/score_lme_gov_predictions.py` as shown in the scoring section below.
-
-## Repository Contents
-
-- `ssgm/`: core SSGM runtime implementation.
-- `ssgm/prompts/`: judge and NLI prompt templates used by API-backed runs.
-- `scripts/score_lme_gov_predictions.py`: scorer for LME-Gov prediction files.
-- `data/`: lightweight notes pointing to the external LME-Gov dataset.
-
-The repository intentionally excludes the full dataset, experiment outputs,
-model logs, manuscript source, and table-generation artifacts. External
-benchmarks used in the paper, including LoCoMo, should be obtained from their
-original project sources and are not redistributed here.
-
-## Core Usage
-
-The reviewer quick start above gives copy-paste commands for installation, a
-minimal SSGM smoke run, dataset loading, and running one LME-Gov scenario. In
-regular use, import `SSGMEngine`, `MemoryRecord`, and `AccessContext` from
-`ssgm`, write structured candidate records into the engine, then retrieve under
-an explicit access context.
-
-## Loading LME-Gov
-
-LME-Gov is published as two Hugging Face configs:
-
-- `scenarios`: derived governance scenarios used for write admission, leakage,
-  freshness, contradiction, and scoped-read evaluation.
-- `base_tasks`: LongMemEval-derived base histories before governance
-  perturbations.
-
-Use the Hugging Face `datasets` package:
+## No-model smoke example
 
 ```python
-from datasets import load_dataset
+from ssgm import AccessContext, MemoryRecord, SSGMEngine
 
-scenarios = load_dataset("siufgdaias/lme-gov", "scenarios")
-print(scenarios)
-print(scenarios["test"][0]["scenario_uid"])
-
-base_tasks = load_dataset("siufgdaias/lme-gov", "base_tasks")
-print(base_tasks)
-```
-
-For memory-limited machines, stream rows instead of materializing the full
-split:
-
-```python
-from datasets import load_dataset
-
-stream = load_dataset(
-    "siufgdaias/lme-gov",
-    "scenarios",
-    split="test",
-    streaming=True,
+engine = SSGMEngine(mode="full_ssgm", stale_after=3, use_embeddings=False)
+record = MemoryRecord(
+    key="alice:preference:coffee", value="Alice prefers espresso.",
+    tenant_id="alice", source="user", timestamp=1, provenance_ok=True,
 )
-first = next(iter(stream))
-print(first["scenario_uid"], len(first["writes"]))
+print(engine.write(record))
+context = AccessContext(actor_id="alice", tenant_id="alice", now_ts=2)
+print([r.key for r in engine.retrieve("coffee preference", context, top_k=5)])
 ```
 
-The split JSONL files expose `expected_answer_items`, a stable list of
-`{"key", "value"}` objects. The full nested source JSON in the dataset
-repository preserves the original builder structure.
+Expected output: `True` and `['alice:preference:coffee']`.
+This example runs without models or network access. With embeddings disabled,
+retrieval uses recency ordering and provenance checks use record confidence.
 
-## Running SSGM On LME-Gov
+## Ollama judge and NLI
 
-The quick-start scenario command uses structured candidate records from
-LME-Gov. Raw-to-record induction is a separate setting: raw text is first
-converted into candidate records, then the same SSGM write gate is applied.
-
-## Scoring LME-Gov Predictions
-
-The scorer expects predictions keyed by `scenario_uid`. Each prediction row can
-provide:
-
-- `accepted_write_keys`: list of write keys admitted by the tested memory
-  system.
-- `retrieved_keys`: list of keys exposed by retrieval/read operations.
-- Optional `system` or `mode`: system name used in the score summary.
-
-Example prediction file:
-
-```json
-{"scenario_uid":"example_uid","system":"my_system","accepted_write_keys":["alice:key1"],"retrieved_keys":["alice:key1"]}
-```
-
-Score against the full nested dataset after downloading it from Hugging Face:
+Install and start Ollama separately, then make the required models available:
 
 ```bash
-python scripts/score_lme_gov_predictions.py \
-  --dataset data/lme_gov/lme_gov.json \
-  --predictions outputs/my_predictions.jsonl \
-  --split test \
-  --output outputs/my_scores.json
+ollama pull qwen3.5:9b
+ollama pull nomic-embed-text-v2-moe
 ```
-
-You can also score against a scenario split shard, for example:
-
-```bash
-python scripts/score_lme_gov_predictions.py \
-  --dataset data/lme_gov/splits/scenarios/test.jsonl.gz \
-  --predictions outputs/my_predictions.jsonl \
-  --output outputs/my_scores.json
-```
-
-The output reports benign-write acceptance, risky-write acceptance and block
-rate, leakage success, and stale exposure, both overall and by scenario family.
-
-## API-Backed Runs
-
-`create_full_engine` wires the full SSGM stack with optional NLI and judge
-components:
 
 ```python
 from ssgm import create_full_engine
 
 engine = create_full_engine(
-    mode="full_ssgm",
+    judge_backend="ollama",
     model="qwen3.5:9b",
     base_url="http://localhost:11434/v1",
     strict_api_failures=True,
 )
 ```
 
-For hosted OpenAI-compatible providers, pass `api_key`, `base_url`, and model
-name explicitly or through environment variables. Strict API failure mode raises
-on provider failures instead of silently falling back.
+The factory defaults to Ollama, including NLI with abstention
+threshold 0.4. Set `enable_nli=False` if only the write judge is wanted.
+Embeddings use a separate Ollama endpoint, configured through
+`embedding_base_url` or `OLLAMA_BASE_URL`. Failures raise by default.
+Setting `allow_embedding_fallback=True` enables recency-based retrieval and
+confidence-based provenance checks when embeddings fail.
 
-## Dataset Notes
+## Compact NLI alternative
 
-LME-Gov is a project-maintained, LongMemEval-derived governance evaluation
-suite. It should not be described as an independently maintained community
-benchmark. When reporting results, include the split, sample size, sampling
-seed, system configuration, judge/NLI configuration if used, and whether inputs
-were structured records or raw text followed by record induction.
+```bash
+python -m pip install "torch>=2.2" "transformers>=4.40,<5" "sentencepiece>=0.2"
+```
 
-## Privacy And Secrets
+```python
+engine = create_full_engine(
+    judge_backend="compact_nli",
+    model="cross-encoder/nli-deberta-v3-small",
+    use_embeddings=False,
+)
+```
 
-The repository uses relative project paths. API credentials are read from
-environment variables and are not stored in the repository. Some benchmark
-fixtures contain synthetic attack strings such as fake `sk-...` tokens or fake
-local paths; these are not deployment credentials. LME-Gov inherits public
-LongMemEval-cleaned conversation content, including user-like snippets such as
-code outputs, paths, and web references from the upstream public benchmark.
+The first model use may download Hugging Face weights. Offline execution
+requires those weights to be available locally. This config uses compact NLI
+for both judging and contradiction checks; it does not contact Ollama.
 
-## Licensing And Attribution
+For hosted models, select `judge_backend="openai_responses"` or
+`"minimax"`, choose the model, and set `OPENAI_API_KEY`
+or `MINIMAX_API_KEY` in your environment. The OpenAI backend accepts a
+matching Responses endpoint through `base_url`. The MiniMax write judge uses
+its built-in MiniMax endpoint; a custom `base_url` only configures its NLI
+component. The OpenAI backend requires the Responses API. Store credentials
+in environment variables.
 
-The SSGM code is released under the repository license. LME-Gov is derived from
-LongMemEval and is distributed through the separate Hugging Face dataset
-repository with the upstream LongMemEval attribution and license notice; see
-`THIRD_PARTY_NOTICE.md`. If you use LME-Gov, cite both SSGM and LongMemEval.
+## Data and evaluation
+
+The dataset is distributed separately:
+https://huggingface.co/datasets/siufgdaias/lme-gov
+
+```python
+from datasets import load_dataset
+
+rows = load_dataset(
+    "siufgdaias/lme-gov", "scenarios", split="test", streaming=True,
+)
+first = next(iter(rows))
+print(first["scenario_uid"], len(first["writes"]))
+```
+
+Dataset content version remains **1.0.0** (500 base histories, 6,500 scenarios).
+Tooling version is **1.0**. The data are structured governance scenarios
+derived from LongMemEval, not a general QA or unstructured induction benchmark.
+
+### Prediction format
+
+Each scenario needs write decisions and explicit results for every designated
+leakage/stale probe. A returned record means exposure; a tested read that
+returns no record is `false`.
+
+```json
+{"scenario_uid":"example_uid","system":"my_system","write_decisions":{"alice:key1":"allow","alice:risky":"quarantine"},"probe_results":{"bob:private":false}}
+```
+
+Use the actual IDs and keys in the dataset. `accepted_write_keys` may replace
+`write_decisions`; that list is a complete statement of admitted keys.
+For `write_decisions`, allow/accept is accepted; quarantine/block/defer is
+not admitted. Unknown strings are errors.
+
+`retrieved_keys` can prove positive exposure. A key missing from that list
+does not prove its read probe ran, so explicit negative `probe_results` are
+required.
+
+```bash
+python scripts/score_lme_gov_predictions.py --dataset /path/to/test.jsonl.gz --predictions predictions.jsonl --output scores.json
+```
+
+The scorer accepts nested JSON, JSONL and gzip JSONL. It rejects duplicate or
+unknown scenario IDs and incomplete coverage by default. For an intentional
+subset add `--allow-partial`; the output reports coverage. Missing-decision
+policies are recorded in the output so assumed outcomes remain identifiable.
+
+Outputs include benign/risky acceptance, **risky non-admission**, leakage and
+stale exposure. Non-admission combines quarantine and block. Metrics without a
+denominator are `null`, not zero or 100%. Errors return a nonzero exit status
+and suppress summary scores.
+
+## Scope and limitations
+
+- This package contains the core runtime, two model prompt templates, scorer
+  and regression tests. It does not include the full paper experiment drivers,
+  saved outputs, table generation, or the LME-Gov construction pipeline.
+- Source/tenant/attestation fields must come from trusted infrastructure.
+  The middleware does not authenticate them cryptographically.
+- Quarantine excludes records from normal retrieval. A human approval UI,
+  concurrent-write coordination and verifiable data erasure are not provided.
+- LLM judge requests use up to 1,000 characters in single calls and 400 in
+  batch calls. Cache keys cover the full input; model decisions cover the
+  text sent in the request.
+- This is research software. Model-dependent behavior requires evaluation
+  under the intended deployment configuration.
+
+## License and attribution
+
+Code is MIT licensed; see [LICENSE](LICENSE) and
+[THIRD_PARTY_NOTICE.md](THIRD_PARTY_NOTICE.md). Upstream data retain their
+original license and attribution. Cite SSGM and LongMemEval when using LME-Gov;
+[CITATION.cff](CITATION.cff) records the SSGM paper title and author list.
+
+AI tools assisted code development and internal manuscript review. The authors
+are responsible for the released code and research claims.
+
+## Verification
+
+Checks passed in a clean Windows Python 3.12 environment:
+
+- 12 regression tests covering cache isolation, configuration, access scope,
+  quarantine and scoring.
+- The no-model smoke example.
+- `pip check`.
+
+Install the runtime and data-loading dependencies from `requirements.txt`.
+Compact NLI requires the additional packages listed above. Model responses are
+mocked in the regression tests.

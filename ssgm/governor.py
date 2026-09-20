@@ -175,12 +175,14 @@ class SSGMEngine:
         use_weibull: bool = False,
         nli_adjudicator: Optional = None,  # Level 3 NLI adjudicator
         mcore_config: Optional = None,    # M_core query config
-        llm_judge: Optional = None,        # LLM-based poisoning judge (NEW)
+        llm_judge: Optional = None,
         embedding_model: str = "nomic-embed-text-v2-moe",
         embedding_base_url: Optional[str] = None,
         require_provenance_attestation: bool = False,
         temporal_confidence_margin: float = 0.0,
         defer_without_nli: bool = False,
+        use_embeddings: bool = True,
+        allow_embedding_fallback: bool = False,
     ) -> None:
         if mode not in MODE_CAPABILITIES:
             raise ValueError(f"Unknown mode: {mode}")
@@ -192,7 +194,11 @@ class SSGMEngine:
         self.require_provenance_attestation = require_provenance_attestation
         self.temporal_confidence_margin = max(0.0, float(temporal_confidence_margin))
         self.defer_without_nli = defer_without_nli
-        self.provenance_detector = provenance_detector or ProvenanceDetector()
+        self.provenance_detector = provenance_detector or ProvenanceDetector(
+            use_embeddings=use_embeddings, allow_embedding_fallback=allow_embedding_fallback,
+            embedding_model=embedding_model,
+            **({"embedding_base_url": embedding_base_url} if embedding_base_url else {}),
+        )
         self.provenance_detector.require_attestation_for_trusted_sources = require_provenance_attestation
 
         # Level 3 NLI (optional — requires API key)
@@ -203,11 +209,13 @@ class SSGMEngine:
         self.mcore_config = mcore_config or MCoreQueryConfig()
         self._mcore_query = MCoreQuery()
 
-        # LLM poisoning judge (NEW — uses LLM instead of pre-labeled provenance_ok)
+        # Optional content-based write judge.
         self.llm_judge = llm_judge
 
         self.ledger = EvidenceLedger()
-        self.store = SemanticStore(embedding_model=embedding_model, base_url=embedding_base_url)
+        self.store = SemanticStore(embedding_model=embedding_model, base_url=embedding_base_url,
+                                   use_embeddings=use_embeddings,
+                                   allow_embedding_fallback=allow_embedding_fallback)
         self.metrics = RunMetrics()
         self.reconciler = BatchReconciler()
         self.last_write_result: Optional[WriteResult] = None
